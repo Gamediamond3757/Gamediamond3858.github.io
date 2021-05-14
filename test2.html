@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Multiuser Sketchpad (Colors)</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="icon" type="image/png" sizes="512x512" href="https://cdn.glitch.com/e8c51d14-025b-4b64-96fd-d96c8bb112d9%2Fmultisketch-color-icon.png?v=1587113190477">
+    <link rel="apple-touch-icon" type="image/png" sizes="512x512" href="https://cdn.glitch.com/e8c51d14-025b-4b64-96fd-d96c8bb112d9%2Fmultisketch-color-icon.png?v=1587113190477">
+    <link type="text/css" rel="stylesheet" href="./css/main.css">
+  </head>
+  <body>
+    <div id="menu">
+      <span class="submenu">
+         <span id="status">🟡</span>&nbsp; SOCKET
+      </span>
+      <span class="submenu">
+        <span id="colors">
+          <span>⚫️</span>
+          <span>🔵</span>
+          <span>🟢</span>
+          <span>🟣</span>
+          <span>🔴</span>
+          <span>🟤</span>
+          <span>🟠</span>
+          <span>🟡</span>
+          <span>⚪️</span>
+        </span>&nbsp;
+        <a href="https://multiuser-sketchpad.glitch.me/">➖</a>
+      </span>
+      <!--
+      <span class="submenu">
+        <span id="download">💾</span>
+      </span>
+      -->
+      <span class="submenu info"><a href="https://twitter.com/mrdoob/status/1250408940795334656" target="_blank">💬</a></span>
+    </div>
+    <div id="cursors"></div>
+    <script type="module">
+      
+      /**
+       * @author mrdoob / http://mrdoob.com/
+       *
+       * Source code:
+       * https://glitch.com/edit/#!/multiuser-sketchpad-colors
+       */
+      
+      import { Painter } from './js/Painter.js';
+      import { Recorder } from './js/Recorder.js';
+      
+      // const DEBUG = window.location.search === '?debug';
+      
+      // Canvas
+      
+      const canvas = document.createElement( 'canvas' );
+      canvas.id = 'canvas';
+      canvas.width = window.innerWidth * window.devicePixelRatio;
+      canvas.height = window.innerHeight * window.devicePixelRatio;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      document.body.appendChild( canvas );
+      
+      const context = canvas.getContext( '2d' );
+      context.lineWidth = 0.7 * window.devicePixelRatio;
+      context.fillStyle = 'rgb(238, 238, 238)';
+      context.fillRect( 0, 0, canvas.width, canvas.height );
+
+      //
+      
+      let painters = {};
+      let recorder = null;
+      
+      // WebSockets
+            
+      const ws = new WebSocket( 'wss://' + window.location.hostname );
+      ws.binaryType = 'arraybuffer';
+
+      ws.addEventListener( 'open', function ( event ) {
+
+        recorder = new Recorder( context, ws );
+
+        canvas.addEventListener( 'pointerdown', onPointerDown );
+        canvas.addEventListener( 'pointerup', onPointerUp );
+
+        document.getElementById( 'status' ).textContent = '🟢';    
+              
+        // Colors
+
+        let colors = document.getElementById( 'colors' );
+
+        for ( let i = 0; i < colors.children.length; i ++ ) {
+
+          let child = colors.children[ i ];
+          child.addEventListener( 'click', function ( event ) {
+
+            recorder.color( i );
+
+          } );
+
+        }
+        
+        /*
+        // Download
+        
+        let download = document.getElementById( 'download' );
+        download.addEventListener( 'click', function ( event ) {
+          
+          var link = document.createElement( 'a' );
+          link.download = generateFilename();
+          link.href = canvas.toDataURL();
+          link.click();
+          
+        } );
+        */
+
+      } );
+
+      ws.addEventListener( 'close', function ( event ) {
+        
+        document.getElementById( 'status' ).textContent = '🔴';
+
+      } );
+
+      ws.addEventListener( 'message', function ( event ) {
+
+        let dataview = new DataView( event.data );
+        let id = dataview.getUint8( 0 );
+      
+        if ( painters[ id ] === undefined ) {
+          
+          let container = document.getElementById( 'cursors' );
+          painters[ id ] = new Painter( context, container );
+          
+        }
+        
+        painters[ id ].execute( dataview );
+
+      } );
+      
+      // It's 2020 and WebKit/iOS still needs this...
+
+      canvas.addEventListener( 'touchstart', function ( event ) {
+        
+        event.preventDefault();
+              
+      } );
+      
+      // Recorder
+      
+      let ptime = 0;
+      
+      function onPointerMove( event ) {
+        
+        event.preventDefault();
+        
+        if ( event.isPrimary ) {
+          
+          // Throttle to 20Hz
+
+          const throttle = 1000 / 20;
+          const time = event.timeStamp;
+
+          if ( time < ( ptime + throttle ) ) return;
+
+          ptime = time;
+
+          //        
+
+          const x = parseInt( event.pageX * window.devicePixelRatio );
+          const y = parseInt( event.pageY * window.devicePixelRatio );
+
+          recorder.move( x, y );
+          
+        }
+
+      }
+      
+      function onPointerDown( event ) {
+        
+        if ( event.isPrimary && event.button === 0 ) {
+          
+          const x = parseInt( event.pageX * window.devicePixelRatio );
+          const y = parseInt( event.pageY * window.devicePixelRatio );
+
+          recorder.down( x, y );
+
+          canvas.addEventListener( 'pointermove', onPointerMove );
+
+        }
+        
+      }
+      
+      function onPointerUp( event ) {
+
+        if ( event.isPrimary && event.button === 0 ) {
+
+          recorder.up();
+
+          canvas.removeEventListener( 'pointermove', onPointerMove );
+          
+        }
+        
+      }
+      
+      /*
+      setInterval( function () {
+        
+        if ( ws.readyState !== 1 ) return;
+
+        context.fillStyle = 'rgba(238, 238, 238, 0.05)';
+        context.fillRect( 0, 0, canvas.width, canvas.height );
+
+      }, 30000 );
+      */
+      
+      // Utils
+      
+      function generateFilename() {
+
+        var dt = new Date();
+
+        return [
+          'Multiuser Sketchpad Colors ',
+          dt.getFullYear().toString().padStart( 4, '0' ) + '_',
+          (dt.getMonth()+1).toString().padStart( 2, '0' ) + '_',
+          dt.getDate().toString().padStart( 2, '0' ) + ' ',
+          dt.getHours().toString().padStart( 2, '0' ) + '_',
+          dt.getMinutes().toString().padStart( 2, '0' ) + '_',
+          dt.getSeconds().toString().padStart( 2, '0' ),
+          '.png'
+        ].join( '' );
+        
+      }
+      
+    </script>
+  </body>
+</html>
