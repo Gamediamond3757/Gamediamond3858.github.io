@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Beach Balls</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #101010;
+				margin: 0px;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+	<body>
+
+		<script src="/js/ga.js"></script>
+
+		<script src="cannon.min.js"></script>
+		<script src="three.min.js"></script>
+
+		<script id="worker" type="javascript/worker">
+
+			var world, bodies = [];
+			
+			self.onmessage = function ( event ) {
+			
+				var data = event.data;
+			
+				if ( world === undefined ) {
+				
+					importScripts( data.lib );
+				
+					world = new CANNON.World();
+					world.gravity.set( 0, - 15, 0 );
+					world.broadphase = new CANNON.NaiveBroadphase();
+
+					var groundMaterial = new CANNON.Material();
+					var ballBodyMaterial = new CANNON.Material();
+					
+					world.addContactMaterial( new CANNON.ContactMaterial( groundMaterial, ballBodyMaterial, 0.2, 0.5 ) );
+					world.addContactMaterial( new CANNON.ContactMaterial( ballBodyMaterial, ballBodyMaterial, 0.2, 0.8 ) );
+
+					var groundShape = new CANNON.Plane();
+					var groundBody = new CANNON.RigidBody( 0, groundShape, groundMaterial );
+					groundBody.quaternion.setFromAxisAngle( new CANNON.Vec3( 1, 0, 0 ), - Math.PI / 2 );
+					world.add( groundBody );
+
+					var planeShapeXmin = new CANNON.Plane();
+					var planeXmin = new CANNON.RigidBody( 0, planeShapeXmin, groundMaterial );
+					planeXmin.quaternion.setFromAxisAngle( new CANNON.Vec3( 0, 1, 0 ), Math.PI / 2 );
+					planeXmin.position.set( - 10, 0, 0 );
+					world.add( planeXmin );
+
+					var planeShapeXmax = new CANNON.Plane();
+					var planeXmax = new CANNON.RigidBody( 0, planeShapeXmax, groundMaterial );
+					planeXmax.quaternion.setFromAxisAngle( new CANNON.Vec3( 0, 1, 0 ), - Math.PI / 2 );
+					planeXmax.position.set( 10, 0, 0 );
+					world.add( planeXmax );
+
+					var planeShapeYmin = new CANNON.Plane();
+					var planeZmin = new CANNON.RigidBody( 0, planeShapeYmin, groundMaterial );
+					planeZmin.position.set( 0, 0, - 10 );
+					world.add( planeZmin );
+	
+					var planeShapeYmax = new CANNON.Plane();
+					var planeZmax = new CANNON.RigidBody( 0, planeShapeYmin, groundMaterial );
+					planeZmax.quaternion.setFromAxisAngle( new CANNON.Vec3( 0, 1, 0 ), Math.PI );
+					planeZmax.position.set( 0, 0, 10 );
+					world.add( planeZmax );
+			
+					for ( var i = 0; i < data.count; i ++ ) {
+
+						var sphereShape = new CANNON.Sphere( 1.25 );
+						var sphereBody = new CANNON.RigidBody( 0.1, sphereShape, ballBodyMaterial );
+						world.add( sphereBody );
+						
+						bodies.push( sphereBody );
+
+					}
+			
+				}
+				
+				var positions = data.positions;
+				var quaternions = data.quaternions;
+
+				for ( var i = 0; i < data.count; i ++ ){
+
+					var body = bodies[ i ];
+					var position = body.position;
+					var quaternion = body.quaternion;
+
+					position.x = positions[ i * 3 + 0 ]; 
+					position.y = positions[ i * 3 + 1 ];
+					position.z = positions[ i * 3 + 2 ];
+
+					quaternion.x = quaternions[ i * 4 + 0 ];
+					quaternion.y = quaternions[ i * 4 + 1 ];
+					quaternion.z = quaternions[ i * 4 + 2 ];
+					quaternion.w = quaternions[ i * 4 + 3 ];
+
+				}
+
+				world.step( data.delta );
+				
+				for ( var i = 0; i < data.count; i ++ ){
+
+					var body = bodies[ i ];
+					var position = body.position;
+					var quaternion = body.quaternion;
+
+					positions[ i * 3 + 0 ] = position.x;
+					positions[ i * 3 + 1 ] = position.y;
+					positions[ i * 3 + 2 ] = position.z;
+
+					quaternions[ i * 4 + 0 ] = quaternion.x;
+					quaternions[ i * 4 + 1 ] = quaternion.y;
+					quaternions[ i * 4 + 2 ] = quaternion.z;
+					quaternions[ i * 4 + 3 ] = quaternion.w;
+
+				}
+
+				self.postMessage({
+					positions: positions,
+					quaternions: quaternions
+				}, [ positions.buffer, quaternions.buffer ] );
+		
+			};
+		</script>
+
+		<script>
+
+			var count = 100;
+		
+			var positions = new Float32Array( count * 3 );
+			var quaternions = new Float32Array( count * 4 );
+			
+			for ( var i = 0; i < count; i ++ ) {
+			
+				positions[ i * 3 + 0 ] = Math.random() * 10 - 5;
+				positions[ i * 3 + 1 ] = Math.random() * 100 + 5;
+				positions[ i * 3 + 2 ] = Math.random() * 10 - 5;
+
+				quaternions[ i * 4 + 0 ] = Math.random() * 3;
+				quaternions[ i * 4 + 1 ] = Math.random() * 3;
+				quaternions[ i * 4 + 2 ] = Math.random() * 3;
+				quaternions[ i * 4 + 3 ] = Math.random() * 3;
+
+			}
+
+			var camera, scene, renderer;
+			var spheres = [];
+
+			var ballGeometry, ballMaterial;
+			
+			var intersectionPlane, origin = new THREE.Vector3( 0, 15, 0 );
+			var isMouseDown = false;
+
+			init();
+			animate();
+
+			function init() {
+			
+				var blob = new Blob([document.getElementById('worker').textContent],{type:'text/javascript'});
+				var worker = new Worker(window.URL.createObjectURL(blob));
+				worker.postMessage = worker.webkitPostMessage || worker.postMessage;
+
+				var delta = 1 / 60;
+				var sendTime;
+				
+				worker.onmessage = function ( event ) {
+
+					var data = event.data;
+					positions = data.positions;
+					quaternions = data.quaternions;
+
+					for ( var i = 0, i3 = 0, i4 = 0; i < count; i ++, i3 += 3, i4 += 4 ){
+
+						spheres[ i ].position.set(
+							positions[ i * 3 + 0 ],
+							positions[ i * 3 + 1 ],
+							positions[ i * 3 + 2 ]
+						);
+
+						spheres[ i ].quaternion.set(
+							quaternions[ i * 4 + 0 ],
+							quaternions[ i * 4 + 1 ],
+							quaternions[ i * 4 + 2 ],
+							quaternions[ i * 4 + 3 ]
+						);
+
+					}
+					
+					var delay = delta * 1000 - ( Date.now() - sendTime );
+					setTimeout( sendDataToWorker, Math.max( 0, delay ) );
+				
+				};
+				
+				var lib = document.location.href.replace(/\/[^/]*$/,"/") + "cannon.min.js";
+				
+				var sendDataToWorker = function () {
+
+					sendTime = Date.now();
+
+					worker.postMessage({
+						lib: lib,
+						count: count,
+						delta: delta,
+						positions: positions,
+						quaternions: quaternions
+					}, [ positions.buffer, quaternions.buffer ] );
+
+				};
+				
+				sendDataToWorker();
+
+				//
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setClearColor( new THREE.Color( 0x101010 ) );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				document.body.appendChild( renderer.domElement );
+
+				// scene
+
+				camera = new THREE.PerspectiveCamera( 40, window.innerWidth / window.innerHeight, 1, 1000 );
+				camera.position.x = - 30;
+				camera.position.y = 10;
+				camera.position.z = 30;
+				camera.lookAt( new THREE.Vector3( 0, 10, 0 ) );
+
+				scene = new THREE.Scene();
+
+				var light = new THREE.HemisphereLight( 0xffffff, 0x606060, 1.2 );
+				light.position.set( -10, 10, 10 );
+				scene.add( light );
+
+				var geometry = new THREE.BoxGeometry( 20, 20, 20 );
+				var material = new THREE.MeshBasicMaterial( { wireframe: true, opacity: 0.1, transparent: true } );
+				var mesh = new THREE.Mesh( geometry, material );
+				mesh.position.y = 10;
+				scene.add( mesh );
+
+				// geometry
+
+				ballGeometry = new THREE.Geometry();
+				ballMaterial = new THREE.MeshLambertMaterial( { vertexColors: THREE.FaceColors } );
+
+				//
+
+				var colors = [
+					new THREE.Color( 0xe52b30 ),
+					new THREE.Color( 0xe52b30 ),
+					new THREE.Color( 0x2e1b6a ),
+					new THREE.Color( 0xdac461 ),
+					new THREE.Color( 0xf07017 ),
+					new THREE.Color( 0x38b394 ),
+					new THREE.Color( 0xeaf1f7 )
+				];
+
+				var amount = colors.length;
+
+				var geometryTop = new THREE.SphereGeometry( 1.25, 5 * amount, 2, 0, Math.PI * 2, 0, 0.30 );
+
+				for ( var j = 0, jl = geometryTop.faces.length; j < jl; j ++ ) {
+
+					geometryTop.faces[ j ].color = colors[ 0 ]
+
+				}
+				
+				ballGeometry.merge( geometryTop );
+
+				var geometryBottom = new THREE.SphereGeometry( 1.25, 5 * amount, 2, 0, Math.PI * 2, Math.PI - 0.30, 0.30 );
+
+				for ( var j = 0, jl = geometryBottom.faces.length; j < jl; j ++ ) {
+
+					geometryBottom.faces[ j ].color = colors[ 0 ]
+
+				}
+
+				ballGeometry.merge( geometryBottom );
+
+				var sides = amount - 1;
+				var size = ( Math.PI * 2 ) / sides;
+
+				for ( var i = 0; i < sides; i ++ ) {
+
+					var patch = new THREE.SphereGeometry( 1.25, 5, 10, i * size, size, 0.30, Math.PI - 0.60 );
+
+					for ( var j = 0, jl = patch.faces.length; j < jl; j ++ ) {
+
+						patch.faces[ j ].color = colors[ i + 1 ];
+
+					}
+
+					ballGeometry.merge( patch );
+
+				}
+
+				for ( var i = 0; i < count; i ++ ) {
+
+					var sphere = new THREE.Mesh( ballGeometry, ballMaterial );
+					sphere.position.y = 500;
+					scene.add( sphere );
+
+					spheres.push( sphere );
+
+				}
+				
+				//
+				
+				var geometry = new THREE.PlaneGeometry( 20, 20, 8, 8 );
+				intersectionPlane = new THREE.Mesh( geometry );
+				intersectionPlane.position.y = 10;
+				intersectionPlane.visible = false;
+				scene.add( intersectionPlane );
+
+				var projector = new THREE.Projector();
+				var ray = new THREE.Raycaster();
+				var mouse3D = new THREE.Vector3();
+
+				document.body.style.cursor = 'pointer';
+				document.addEventListener( 'mousedown', function ( event ) {
+
+					event.preventDefault();
+					isMouseDown = true;
+
+				}, false );
+				document.addEventListener( 'mousemove', function ( event ) {
+
+					mouse3D.set(
+						( event.clientX / window.innerWidth ) * 2 - 1,
+						- ( event.clientY / window.innerHeight ) * 2 + 1,
+						0.5
+					);
+
+					projector.unprojectVector( mouse3D, camera );
+
+					ray.set( camera.position, mouse3D.sub( camera.position ).normalize() );
+
+					var intersects = ray.intersectObject( intersectionPlane );
+
+					if ( intersects.length > 0 ) {
+
+						origin.copy( intersects[ 0 ].point );
+
+					}
+
+				}, false );
+
+				document.addEventListener( 'mouseup', function ( event ) {
+
+					isMouseDown = false;
+
+				}, false );
+				
+				//
+
+				window.addEventListener( 'resize', onWindowResized, false );
+
+				onWindowResized( null );
+
+			}
+
+			function onWindowResized( event ) {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+				render();
+
+			}
+
+			function render() {
+
+				var time = performance.now();
+
+				camera.position.x = - Math.cos( time * 0.0001 ) * 40;
+				camera.position.z = Math.sin( time * 0.0001 ) * 40;
+				camera.lookAt( new THREE.Vector3( 0, 10, 0 ) );
+				
+				intersectionPlane.lookAt( camera.position );
+				
+				if ( isMouseDown === true ) {
+				
+					var i = Math.floor( Math.random() * count ) * 3;
+					
+					var x = origin.x + ( Math.random() * 4 - 2 );
+					var y = origin.y + ( Math.random() * 4 - 2 );
+					var z = origin.z + ( Math.random() * 4 - 2 );
+					
+					positions[ i + 0 ] = Math.max( -10, Math.min( 10, x ) );
+					positions[ i + 1 ] = Math.max( 5, y );
+					positions[ i + 2 ] = Math.max( -10, Math.min( 10, z ) );
+				
+				}
+
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+
+	</body>
+</html>
